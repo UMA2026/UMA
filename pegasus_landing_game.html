@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pegasus Landing: Pista de Aterrizaje</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #2c3e50; /* Cielo oscuro */
+            font-family: 'Inter', sans-serif;
+            color: #ecf0f1;
+        }
+
+        #game-container {
+            position: relative;
+            touch-action: none; /* Previene el scroll del navegador al tocar */
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            max-width: 600px;
+            width: 95vw;
+            height: 80vh; /* Altura responsive */
+            min-height: 400px;
+            overflow: hidden;
+        }
+
+        #gameCanvas {
+            background: linear-gradient(to bottom, #3498db, #2980b9); /* Degradado del cielo */
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Elementos del HUD */
+        .hud-item {
+            position: absolute;
+            color: white;
+            padding: 8px 15px;
+            background-color: rgba(0, 0, 0, 0.5);
+            border-radius: 8px;
+            font-size: 1.1em;
+            z-index: 10;
+            user-select: none;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
+        #score-display { top: 15px; left: 15px; background-color: #f39c12; font-weight: bold; }
+        #fuel-display { top: 15px; right: 15px; background-color: #c0392b; font-weight: bold; }
+        #message-display {
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.5em;
+            text-align: center;
+            background-color: rgba(44, 62, 80, 0.9);
+            padding: 20px 30px;
+            border-radius: 10px;
+            display: none;
+        }
+
+        /* Pantalla de Inicio/Game Over */
+        #start-screen, #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.85);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.2em;
+            text-align: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #start-screen h1, #game-over-screen h2 {
+            margin-bottom: 5px;
+            font-size: 2em;
+        }
+        #start-screen p, #game-over-screen p {
+            font-size: 0.9em;
+            max-width: 80%;
+        }
+
+        /* Botón Universal */
+        .control-button {
+            margin-top: 30px;
+            padding: 15px 30px;
+            font-size: 1.2em;
+            background-color: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            box-shadow: 0 5px #1e8449;
+            transition: all 0.1s ease;
+        }
+        .control-button:active {
+            box-shadow: 0 2px #1e8449;
+            transform: translateY(3px);
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="score-display" class="hud-item">Distancia: 0m</div>
+        <div id="fuel-display" class="hud-item">Combustible: 100%</div>
+        <div id="message-display" class="hud-item"></div>
+
+        <!-- Pantalla de Inicio --><div id="start-screen">
+            <h1>Pegasus Landing</h1>
+            <p><strong>Misión:</strong> Aterrizar en las plataformas antes de agotar el combustible, esquivando a los buitres.</p>
+            <p><strong>Control:</strong> Toca o haz clic en cualquier lugar para darle un impulso. ¡Aterriza suavemente en la plataforma para recargar!</p>
+            <p><strong>RESTRICCIÓN:</strong> Aterriza con velocidad descendente y NO demasiado rápido. ¡Cuidado con los buitres!</p>
+            <button id="startButton" class="control-button">Empezar Misión</button>
+        </div>
+
+        <!-- Pantalla de Game Over (Inicialmente oculta) --><div id="game-over-screen" style="display:none;">
+            <h2>¡Misión Fallida!</h2>
+            <p id="fail-reason">Motivo de la pérdida: Se agotó el combustible.</p>
+            <p>Distancia Total Recorrida: <span id="final-score">0</span>m</p>
+            <button id="restartButton" class="control-button">Reintentar</button> 
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameContainer = document.getElementById('game-container');
+        const scoreDisplay = document.getElementById('score-display');
+        const fuelDisplay = document.getElementById('fuel-display');
+        const messageDisplay = document.getElementById('message-display');
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const finalScoreDisplay = document.getElementById('final-score');
+        const failReason = document.getElementById('fail-reason');
+        const startButton = document.getElementById('startButton');
+        const restartButton = document.getElementById('restartButton'); 
+
+        // Game Configuration
+        const GRAVITY = 0.4;
+        const FLAP_STRENGTH = 8;
+        const GROUND_HEIGHT = 50;
+        const INITIAL_FUEL = 100;
+        const FUEL_CONSUMPTION_RATE = 0.05; 
+        const FUEL_REFILL_AMOUNT = 15; // Reducido a 15%
+        
+        // Configuraciones de DIFICULTAD
+        const BASE_SPEED = 1.5; 
+        const MAX_SPEED = 5.0; 
+        const SPEED_INCREASE_RATE = 0.0007; 
+        const PLATFORM_WIDTH = 50; 
+        const PLATFORM_GAP = 200; 
+
+        // Configuración de Obstáculos (Buitres)
+        let vultures = [];
+        let vultureSpawnTimer = 0;
+        const VULTURE_SPAWN_GAP = 300; 
+
+        // Configuración de aterrizaje flexible
+        const MAX_LANDING_VELOCITY = 8; // Aterrizaje permitido si velocity > 0 y velocity < 8
+
+        let gameActive = false;
+        let animationFrameId;
+        let score = 0;
+        let fuel = INITIAL_FUEL;
+        let gameSpeed = BASE_SPEED; 
+
+        // Generador de números aleatorios
+        function random(min, max) {
+            return Math.floor(Math.random() * (max - min + 1)) + min;
+        }
+
+        // Pegasus Object (Helicóptero)
+        const pegasus = {
+            x: 80,
+            y: 0, 
+            width: 40,
+            height: 20,
+            velocity: 0,
+            color: '#f1c40f', // Amarillo Pegasus
+            
+            draw: function() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // Cuerpo (Simple Box)
+                ctx.fillStyle = this.color;
+                ctx.fillRect(0, 0, this.width, this.height);
+
+                // Cabina (Triángulo + Rectángulo)
+                ctx.fillStyle = '#34495e'; 
+                ctx.beginPath();
+                ctx.moveTo(this.width, this.height / 2); 
+                ctx.lineTo(this.width * 0.7, this.height);
+                ctx.lineTo(this.width * 0.7, 0);
+                ctx.fill();
+                
+                // Patines (Línea)
+                ctx.strokeStyle = '#ecf0f1';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(0, this.height + 5);
+                ctx.lineTo(this.width, this.height + 5);
+                ctx.stroke();
+
+                // Aspas (Simulación de giro con líneas cortas)
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                const bladeRadius = 30;
+                const bladeCenterX = this.width * 0.2;
+                const bladeCenterY = -5;
+                const angle = Date.now() / 100; 
+
+                for (let i = 0; i < 4; i++) {
+                    const currentAngle = angle + (i * Math.PI / 2);
+                    const endX = bladeCenterX + bladeRadius * Math.cos(currentAngle);
+                    const endY = bladeCenterY + bladeRadius * Math.sin(currentAngle);
+                    ctx.beginPath();
+                    ctx.moveTo(bladeCenterX, bladeCenterY);
+                    ctx.lineTo(endX, endY);
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = 'white';
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            },
+            flap: function() {
+                this.velocity = -FLAP_STRENGTH;
+            }
+        };
+
+        // Platform Object (Plataformas de reabastecimiento)
+        let platforms = [];
+        class Platform {
+            constructor() {
+                this.width = PLATFORM_WIDTH; 
+                this.height = 10;
+                this.x = canvas.width; 
+                this.y = random(canvas.height * 0.2, canvas.height - GROUND_HEIGHT - 50); 
+                this.isRefueled = false;
+            }
+
+            update() {
+                this.x -= gameSpeed; 
+            }
+
+            draw() {
+                // Base
+                ctx.fillStyle = this.isRefuelled ? '#2ecc71' : '#e74c3c'; 
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                
+                // Detalle del tanque de combustible
+                const tankWidth = this.width * 0.7;
+                const tankPadding = (this.width - tankWidth) / 2;
+                
+                ctx.fillStyle = '#ecf0f1';
+                ctx.fillRect(this.x + tankPadding, this.y - 15, tankWidth, 15);
+                
+                // Nivel de combustible
+                const fuelIndicatorWidth = tankWidth * 0.8;
+                const fuelIndicatorX = this.x + tankPadding + (tankWidth - fuelIndicatorWidth) / 2;
+                
+                ctx.fillStyle = this.isRefueled ? '#1abc9c' : '#c0392b';
+                ctx.fillRect(fuelIndicatorX, this.y - 10, fuelIndicatorWidth, 5);
+
+                // Texto 
+                if (!this.isRefueled) {
+                     ctx.fillStyle = 'white';
+                     ctx.font = 'bold 10px Inter'; 
+                     ctx.textAlign = 'center';
+                     ctx.fillText('FUEL', this.x + this.width / 2, this.y - 4);
+                }
+            }
+        }
+        
+        // Vulture Object (Buitres / Obstáculos)
+        class Vulture {
+            constructor() {
+                this.width = 30;
+                this.height = 20;
+                this.x = canvas.width;
+                // Posición vertical inicial aleatoria
+                this.baseY = random(50, canvas.height - GROUND_HEIGHT - 50); 
+                this.y = this.baseY;
+                this.amplitude = 30; // Amplitud del movimiento vertical
+                this.frequency = random(50, 100) / 1000; // Frecuencia de la onda sinusoidal
+                this.timeOffset = Date.now() / 1000; 
+                this.color = '#34495e'; // Gris oscuro
+            }
+
+            update() {
+                this.x -= gameSpeed;
+                // Movimiento sinusoidal vertical
+                this.y = this.baseY + this.amplitude * Math.sin((Date.now() / 1000 - this.timeOffset) * this.frequency * 10);
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                
+                // Dibujar Buitre (simulación de ala con un trazo angular)
+                ctx.beginPath();
+                // Cuerpo (punto de inicio)
+                ctx.moveTo(this.x, this.y + this.height * 0.5); 
+                // Ala superior
+                ctx.lineTo(this.x + this.width, this.y);     
+                // Ala inferior
+                ctx.lineTo(this.x + this.width * 0.8, this.y + this.height); 
+                ctx.closePath();
+                ctx.fill();
+
+                // Ojo
+                ctx.fillStyle = '#e74c3c';
+                ctx.beginPath();
+                ctx.arc(this.x + this.width * 0.2, this.y + this.height * 0.5, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // --- Game Setup and Control ---
+        
+        function setCanvasSize() {
+             canvas.width = gameContainer.clientWidth;
+             canvas.height = gameContainer.clientHeight;
+        }
+
+        function handleTap() {
+            if (gameActive) {
+                pegasus.flap();
+            }
+        }
+
+        function setupControls() {
+            // Tocar o hacer clic en el contenedor para el impulso (durante el juego)
+            gameContainer.addEventListener('click', handleTap);
+            gameContainer.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                handleTap();
+            }, { passive: false });
+            
+            // Listeners para los botones (click y touchend)
+            startButton.addEventListener('click', startGame);
+            startButton.addEventListener('touchend', (e) => {
+                e.preventDefault(); 
+                startGame();
+            });
+
+            restartButton.addEventListener('click', restartGame);
+            restartButton.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                restartGame();
+            });
+        }
+
+        function updatePegasus() {
+            pegasus.velocity += GRAVITY;
+            pegasus.y += pegasus.velocity;
+
+            // Limitar velocidad vertical
+            pegasus.velocity = Math.min(15, pegasus.velocity);
+
+            // Consumo de combustible
+            fuel -= FUEL_CONSUMPTION_RATE;
+            fuel = Math.max(0, fuel); 
+        }
+
+        // Función para actualizar plataformas y buitres
+        let platformSpawnTimer = 0;
+        function updateObstacles() {
+            // 1. Update and filter platforms
+            platforms.forEach(p => p.update());
+            platforms = platforms.filter(p => p.x + p.width > 0); 
+            
+            // Lógica de aparición de plataformas
+            let effectiveGap = PLATFORM_GAP / (gameSpeed / BASE_SPEED);
+            platformSpawnTimer++;
+            if (platformSpawnTimer > effectiveGap) { 
+                 platforms.push(new Platform());
+                 platformSpawnTimer = 0;
+            }
+
+            // 2. Update and filter vultures
+            vultures.forEach(v => v.update());
+            vultures = vultures.filter(v => v.x + v.width > 0);
+
+            // Lógica de aparición de buitres
+            vultureSpawnTimer++;
+            let effectiveVultureGap = VULTURE_SPAWN_GAP / (gameSpeed / BASE_SPEED); 
+            if (vultureSpawnTimer > effectiveVultureGap) { 
+                vultures.push(new Vulture());
+                vultureSpawnTimer = 0;
+            }
+        }
+
+        function checkCollisions() {
+            const pegasusRight = pegasus.x + pegasus.width;
+            const pegasusBottom = pegasus.y + pegasus.height;
+            
+            // 1. Colisión con el suelo o techo
+            if (pegasus.y <= 0 || pegasusBottom >= canvas.height - GROUND_HEIGHT) {
+                endGame(pegasus.y <= 0 ? 'Colisión con el techo' : 'Aterrizaje forzoso');
+                return true;
+            }
+
+            // 2. Colisión con plataformas (Aterrizaje / Recarga)
+            for (const p of platforms) {
+                const horizontalOverlap = pegasusRight > p.x && pegasus.x < p.x + p.width;
+                const verticalOverlap = pegasusBottom >= p.y && pegasusBottom <= p.y + p.height; 
+
+                if (horizontalOverlap && verticalOverlap) {
+                    
+                    // LÓGICA MODIFICADA: Ahora se requiere velocidad descendente (velocity > 0)
+                    // Y que no sea demasiado rápido (velocity < MAX_LANDING_VELOCITY)
+                    if (pegasus.velocity > 0 && pegasus.velocity < MAX_LANDING_VELOCITY) { 
+                        if (!p.isRefueled) {
+                            fuel = Math.min(INITIAL_FUEL, fuel + FUEL_REFILL_AMOUNT); // 15% refill
+                            p.isRefueled = true;
+                            showMessage('¡Recarga Exitosa (+15%)!', '#2ecc71');
+                        }
+                        
+                        // Posicionar y detener el helicóptero
+                        pegasus.y = p.y - pegasus.height; 
+                        pegasus.velocity = 0; 
+                        
+                        return false; // Aterrizaje completado
+                    } else {
+                         // Choque: Velocidad negativa (chocar desde abajo)
+                         // O velocidad positiva demasiado alta (chocar demasiado rápido)
+                         endGame('¡Aterrizaje demasiado brusco o chocaste desde abajo!');
+                         return true;
+                    }
+                }
+            }
+            
+            // 3. Colisión con Buitres (Muerte instantánea)
+            for (const v of vultures) {
+                const hOverlap = pegasusRight > v.x && pegasus.x < v.x + v.width;
+                const vOverlap = pegasusBottom > v.y && pegasus.y < v.y + v.height;
+
+                if (hOverlap && vOverlap) {
+                    endGame('¡Impacto con Buitre!');
+                    return true;
+                }
+            }
+
+
+            // 4. Agotamiento de combustible
+            if (fuel <= 0) {
+                endGame('Se agotó el combustible');
+                return true;
+            }
+
+            return false;
+        }
+
+        function showMessage(text, color) {
+            messageDisplay.textContent = text;
+            messageDisplay.style.backgroundColor = color;
+            messageDisplay.style.display = 'block';
+            setTimeout(() => {
+                messageDisplay.style.display = 'none';
+            }, 800);
+        }
+
+        // --- Drawing Logic ---
+        
+        function drawGround() {
+            // Suelo (Carretera o Tierra)
+            ctx.fillStyle = '#7f8c8d'; 
+            ctx.fillRect(0, canvas.height - GROUND_HEIGHT, canvas.width, GROUND_HEIGHT);
+            
+            // Línea del horizonte 
+            ctx.strokeStyle = '#bdc3c7';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height - GROUND_HEIGHT);
+            ctx.lineTo(canvas.width, canvas.height - GROUND_HEIGHT);
+            ctx.stroke();
+        }
+
+        function drawGame() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); 
+            
+            drawGround();
+            platforms.forEach(p => p.draw());
+            vultures.forEach(v => v.draw()); // Dibujar Buitres
+            pegasus.draw();
+        }
+
+        function updateHUD() {
+            scoreDisplay.textContent = `Distancia: ${score}m`;
+            fuelDisplay.textContent = `Combustible: ${Math.floor(fuel)}%`;
+            
+            // Alerta visual de bajo combustible
+            if (fuel < 20) {
+                 fuelDisplay.style.backgroundColor = '#e74c3c';
+            } else if (fuel < 50) {
+                 fuelDisplay.style.backgroundColor = '#f39c12';
+            } else {
+                 fuelDisplay.style.backgroundColor = '#2c3e50';
+            }
+        }
+
+        // --- Game Flow Control ---
+
+        function gameLoop() {
+            if (!gameActive) return;
+
+            // --- DIFICULTAD PROGRESIVA: Aumenta la velocidad ---
+            gameSpeed = Math.min(MAX_SPEED, gameSpeed + SPEED_INCREASE_RATE);
+
+            // Actualizar lógica
+            updatePegasus();
+            updateObstacles(); // Actualiza plataformas y buitres
+            
+            if (checkCollisions()) return; 
+
+            // Incrementar distancia (score)
+            score++;
+            
+            // Dibujar
+            drawGame();
+            updateHUD();
+
+            // Siguiente frame
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        function startGame() {
+            // Ocultar pantallas y resetear
+            startScreen.style.display = 'none';
+            gameOverScreen.style.display = 'none';
+            
+            setCanvasSize(); 
+            pegasus.y = canvas.height / 2;
+            
+            // Reiniciar variables
+            score = 0;
+            fuel = INITIAL_FUEL;
+            gameSpeed = BASE_SPEED; 
+            pegasus.velocity = 0;
+            platforms = [];
+            platformSpawnTimer = 0;
+            vultures = []; // Resetear buitres
+            vultureSpawnTimer = 0; // Resetear temporizador de buitres
+
+            gameActive = true;
+            gameLoop();
+        }
+
+        function endGame(reason) {
+            gameActive = false;
+            cancelAnimationFrame(animationFrameId);
+
+            finalScoreDisplay.textContent = score;
+            failReason.textContent = `Motivo: ${reason}.`;
+            gameOverScreen.style.display = 'flex';
+        }
+
+        function restartGame() {
+            startGame();
+        }
+
+        // Initialization on load
+        window.onload = () => {
+            setCanvasSize();
+            pegasus.y = canvas.height / 2; 
+            setupControls();
+            drawGame(); 
+            startScreen.style.display = 'flex';
+        };
+
+        // Handle resize event to keep game responsive
+        window.addEventListener('resize', () => {
+            setCanvasSize();
+            if (!gameActive) {
+                drawGame(); 
+            }
+        });
+
+    </script>
+</body>
+</html>
