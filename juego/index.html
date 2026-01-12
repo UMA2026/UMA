@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Antigravity - Rescate en Helicóptero</title>
+    <style>
+        :root {
+            --primary: #f1c40f;
+            --danger: #e74c3c;
+            --safe: #2ecc71;
+            --bg: #34495e;
+            --text: #ecf0f1;
+            --overlay: rgba(0, 0, 0, 0.85);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            touch-action: none;
+            /* Previene scroll y zoom accidental en móviles */
+            user-select: none;
+        }
+
+        body {
+            background-color: #2c3e50;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            max-width: 600px;
+            /* Limita ancho en escritorio */
+            max-height: 900px;
+            background: var(--bg);
+            overflow: hidden;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(to bottom, #4facfe 0%, #00f2fe 100%);
+        }
+
+        .screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: var(--overlay);
+            color: var(--text);
+            padding: 20px;
+            text-align: center;
+            z-index: 10;
+        }
+
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            color: var(--primary);
+            text-shadow: 2px 2px #c0392b;
+        }
+
+        .instructions {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            max-width: 80%;
+            line-height: 1.6;
+        }
+
+        .instructions ul {
+            list-style: none;
+            text-align: left;
+            display: inline-block;
+        }
+
+        .instructions li {
+            margin-bottom: 10px;
+        }
+
+        button {
+            padding: 15px 40px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            border: none;
+            border-radius: 50px;
+            background: var(--safe);
+            color: white;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.2s;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        button:active {
+            transform: scale(0.95);
+            background: #27ae60;
+        }
+
+        #hud {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: none;
+            z-index: 5;
+            font-weight: bold;
+            font-size: 18px;
+            color: white;
+            text-shadow: 1px 1px 2px black;
+        }
+
+        .fuel-container {
+            width: 120px;
+            height: 20px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 2px solid white;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+
+        #fuel-bar {
+            width: 100%;
+            height: 100%;
+            background: var(--safe);
+            transition: width 0.1s linear;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+
+        <!-- HUD -->
+        <div id="hud" class="hidden">
+            <div>
+                GASOLINA
+                <div class="fuel-container">
+                    <div id="fuel-bar"></div>
+                </div>
+            </div>
+            <div style="text-align: right;">
+                DISTANCIA: <span id="dist-val">0</span>m<br>
+                RESCATES: <span id="resc-val">0</span>
+            </div>
+        </div>
+
+        <!-- Pantalla de Inicio -->
+        <div id="menu-screen" class="screen">
+            <h1>ANTIGRAVITY</h1>
+            <div class="instructions">
+                <ul>
+                    <li>👆 <b>Toca</b> para elevar el helicóptero.</li>
+                    <li>⛽ <b>Combustible:</b> ¡No dejes que se agote!</li>
+                    <li>📦 <b>Bidones:</b> Aterriza en plataformas amarillas para repostar.</li>
+                    <li>👨‍🚒 <b>Rescate:</b> Recoge gente en [!] y déjalos en [+] (Cruz Roja).</li>
+                    <li>🦅 <b>Peligro:</b> Evita buitres y cables eléctricos.</li>
+                </ul>
+            </div>
+            <button id="start-btn">EMPEZAR JUEGO</button>
+        </div>
+
+        <!-- Pantalla de Game Over -->
+        <div id="gameover-screen" class="screen hidden">
+            <h1 style="color: var(--danger);">¡FIN DE MISIÓN!</h1>
+            <div class="instructions" id="final-stats">
+                <!-- Se llena dinámicamente -->
+            </div>
+            <button id="restart-btn">REINTENTAR</button>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * ANTIGRAVITY - Juego Web HTML5
+         * Desarrollado por un equipo Senior AI
+         */
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const fuelBar = document.getElementById('fuel-bar');
+        const distVal = document.getElementById('dist-val');
+        const rescVal = document.getElementById('resc-val');
+
+        // Estado del juego
+        const STATE = { MENU: 0, PLAYING: 1, GAMEOVER: 2 };
+        let gameState = STATE.MENU;
+
+        // Configuración general
+        const CFG = {
+            gravity: 0.25,
+            lift: -5,
+            maxSpeedY: 8,
+            fuelDepletion: 0.08,
+            fuelRefill: 25,
+            baseSpeed: 3,
+            speedInc: 0.0001,
+            obstacleFreq: 1500, // ms
+            platformFreq: 3000, // ms
+        };
+
+        let helicopter, entities, lastTime, gameSpeed, score, rescues, frameCount, lastCablePos;
+        // lastCablePos: 0 para arriba, 1 para abajo.
+
+        // Carga de Assets
+        const ASSETS = {
+            helicopter: new Image(),
+            bird: new Image(),
+            fuel: new Image(),
+            accident: new Image(),
+            hospital: new Image(),
+            bg: new Image()
+        };
+        // Para usar imágenes reales, simplemente añade la ruta aquí:
+        ASSETS.helicopter.src = 'helicoptero.png';
+        ASSETS.fuel.src = 'fuel.png';
+        ASSETS.accident.src = 'accident.png';
+        ASSETS.hospital.src = 'hospital.png';
+        // ASSETS.bird.src = 'ruta/al/pajaro.png';
+        // ... etc.
+
+        // --- CLASES DEL JUEGO ---
+
+        class Helicopter {
+            constructor() {
+                this.width = 80;
+                this.height = 42;
+                this.reset();
+            }
+
+            reset() {
+                this.x = 50;
+                this.y = canvas.height / 2;
+                this.dy = 0;
+                this.fuel = 100;
+                this.carryingCount = 0;
+            }
+
+            tap() {
+                this.dy = CFG.lift;
+            }
+
+            update() {
+                this.dy += CFG.gravity;
+                if (this.dy > CFG.maxSpeedY) this.dy = CFG.maxSpeedY;
+                this.y += this.dy;
+
+                // Combustible
+                this.fuel -= CFG.fuelDepletion;
+                if (this.fuel <= 0) {
+                    this.fuel = 0;
+                    gameOver("¡Te quedaste sin combustible!");
+                }
+
+                // Limites de pantalla
+                if (this.y < 0) {
+                    this.y = 0;
+                    this.dy = 0;
+                }
+                if (this.y + this.height > canvas.height) {
+                    gameOver("¡Chocaste contra el suelo!");
+                }
+
+                // Actualizar HUD Visual
+                fuelBar.style.width = this.fuel + '%';
+                fuelBar.style.backgroundColor = this.fuel < 30 ? 'var(--danger)' : 'var(--safe)';
+            }
+
+            draw() {
+                // 1. DIBUJAR CUERPO (Imagen o Placeholder)
+                if (ASSETS.helicopter.complete && ASSETS.helicopter.src) {
+                    ctx.drawImage(ASSETS.helicopter, this.x, this.y, this.width, this.height);
+                } else {
+                    // Cuerpo del Helicoptero (Placeholder)
+                    ctx.fillStyle = '#f1c40f';
+                    ctx.fillRect(this.x, this.y + 10, this.width, 10);
+                    // Patines
+                    ctx.fillStyle = '#7f8c8d';
+                    ctx.fillRect(this.x + 5, this.y + 22, this.width - 10, 3);
+                }
+
+                // 2. DIBUJAR HÉLICE ANIMADA (Ajustada al asset DGT)
+                ctx.fillStyle = '#34495e';
+                let rotorWidth = this.width * 0.9 * (0.5 + Math.sin(Date.now() * 0.1) * 0.5);
+                let rotorX = this.x + (this.width * 0.65); // Posición del eje (65% del ancho)
+
+                // Aspas
+                ctx.fillRect(rotorX - rotorWidth / 2, this.y - 2, rotorWidth, 3);
+                // Eje vertical
+                ctx.fillRect(rotorX - 2, this.y - 2, 4, 8);
+
+                // Representación de pasajeros rescatados
+                for (let i = 0; i < this.carryingCount; i++) {
+                    ctx.fillStyle = '#e67e22';
+                    ctx.beginPath();
+                    // Dibujar pequeñas esferas debajo del helicóptero
+                    ctx.arc(this.x + 10 + (i * 10), this.y + 35, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+
+        class Entity {
+            constructor(x, y, w, h, type) {
+                this.x = x;
+                this.y = y;
+                this.w = w;
+                this.h = h;
+                this.type = type; // 'BIRD', 'CABLE', 'FUEL_STATION', 'ACCIDENT', 'HOSPITAL'
+            }
+
+            update() {
+                this.x -= gameSpeed;
+            }
+
+            draw() {
+                ctx.save();
+                switch (this.type) {
+                    case 'BIRD':
+                        if (ASSETS.bird.complete && ASSETS.bird.src) {
+                            ctx.drawImage(ASSETS.bird, this.x, this.y, this.w, this.h);
+                        } else {
+                            ctx.fillStyle = '#2c3e50';
+                            ctx.beginPath();
+                            ctx.moveTo(this.x, this.y + 5);
+                            ctx.lineTo(this.x + 10, this.y - (Math.sin(Date.now() * 0.01) * 5));
+                            ctx.lineTo(this.x + 20, this.y + 5);
+                            ctx.stroke();
+                            ctx.fillRect(this.x + 5, this.y, 10, 5);
+                        }
+                        break;
+                    case 'CABLE':
+                        ctx.strokeStyle = '#2d3436';
+                        ctx.lineWidth = 4;
+                        ctx.beginPath();
+                        ctx.moveTo(this.x, this.y);
+                        ctx.lineTo(this.x, this.y + this.h);
+                        ctx.stroke();
+                        ctx.fillStyle = '#d63031';
+                        // Indicador de peligro: si y es 0 (techo), poner abajo. Si y > 0 (suelo), poner arriba.
+                        let indicatorY = (this.y === 0) ? (this.y + this.h - 10) : (this.y);
+                        ctx.fillRect(this.x - 5, indicatorY, 10, 10);
+                        break;
+                    case 'FUEL_STATION':
+                        if (ASSETS.fuel.complete && ASSETS.fuel.src) {
+                            ctx.drawImage(ASSETS.fuel, this.x, this.y, this.w, this.h);
+                        } else {
+                            ctx.fillStyle = '#f1c40f';
+                            ctx.fillRect(this.x, this.y, this.w, this.h);
+                            ctx.fillStyle = 'black';
+                            ctx.font = '10px Arial';
+                            ctx.fillText('GAS', this.x + 5, this.y + 15);
+                        }
+                        break;
+                    case 'ACCIDENT':
+                        if (ASSETS.accident.complete && ASSETS.accident.src) {
+                            ctx.drawImage(ASSETS.accident, this.x, this.y, this.w, this.h);
+                        } else {
+                            ctx.fillStyle = '#e74c3c';
+                            ctx.fillRect(this.x, this.y, this.w, this.h);
+                            ctx.fillStyle = 'white';
+                            ctx.fillText('[!]', this.x + 10, this.y + 15);
+                        }
+                        break;
+                    case 'HOSPITAL':
+                        if (ASSETS.hospital.complete && ASSETS.hospital.src) {
+                            ctx.drawImage(ASSETS.hospital, this.x, this.y, this.w, this.h);
+                        } else {
+                            ctx.fillStyle = '#ffffff';
+                            ctx.fillRect(this.x, this.y, this.w, this.h);
+                            ctx.strokeStyle = '#e74c3c';
+                            ctx.lineWidth = 2;
+                            ctx.strokeRect(this.x, this.y, this.w, this.h);
+                            ctx.fillStyle = '#e74c3c';
+                            ctx.fillText('+', this.x + 15, this.y + 15);
+                        }
+                        break;
+                }
+                ctx.restore();
+            }
+        }
+
+        // --- LÓGICA DEL JUEGO ---
+
+        function init() {
+            resize();
+            helicopter = new Helicopter();
+            entities = [];
+            gameSpeed = CFG.baseSpeed;
+            score = 0;
+            rescues = 0;
+            frameCount = 0;
+
+            // Listeners
+            window.addEventListener('mousedown', () => helicopter.tap());
+            window.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                helicopter.tap();
+            }, { passive: false });
+
+            document.getElementById('start-btn').onclick = startGame;
+            document.getElementById('restart-btn').onclick = startGame;
+
+            requestAnimationFrame(loop);
+        }
+
+        function resize() {
+            const container = document.getElementById('game-container');
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+        }
+
+        function startGame() {
+            helicopter.reset();
+            entities = [];
+            score = 0;
+            rescues = 0;
+            gameSpeed = CFG.baseSpeed;
+            gameState = STATE.PLAYING;
+
+            document.getElementById('menu-screen').classList.add('hidden');
+            document.getElementById('gameover-screen').classList.add('hidden');
+            document.getElementById('hud').classList.remove('hidden');
+        }
+
+        function gameOver(msg) {
+            gameState = STATE.GAMEOVER;
+            document.getElementById('gameover-screen').classList.remove('hidden');
+            document.getElementById('final-stats').innerHTML = `
+            <p>${msg}</p><br>
+            <p>Distancia: <b>${Math.floor(score)}m</b></p>
+            <p>Rescates: <b>${rescues}</b></p>
+        `;
+        }
+
+        function spawnEntities() {
+            let forceFuel = helicopter.fuel < 40;
+
+            if (frameCount % 60 === 0) {
+                let rand = Math.random();
+
+                // Obstáculos
+                if (rand < 0.2) {
+                    // Buitre
+                    entities.push(new Entity(canvas.width, 50 + Math.random() * (canvas.height - 150), 20, 10, 'BIRD'));
+                } else if (rand < 0.45) {
+                    // CABLE ALTERNO
+                    lastCablePos = (lastCablePos === 0) ? 1 : 0;
+                    let cableLen = 100 + Math.random() * 200;
+                    if (lastCablePos === 0) {
+                        entities.push(new Entity(canvas.width, 0, 4, cableLen, 'CABLE'));
+                    } else {
+                        entities.push(new Entity(canvas.width, canvas.height - cableLen, 4, cableLen, 'CABLE'));
+                    }
+                }
+
+                // Plataformas
+                if (rand > 0.8 || forceFuel) {
+                    let type = forceFuel ? 'FUEL_STATION' : (Math.random() > 0.5 ? 'ACCIDENT' : 'HOSPITAL');
+                    let platformY;
+                    // Si cable está abajo, plataforma arriba. Si cable arriba, plataforma abajo.
+                    if (lastCablePos === 1) {
+                        platformY = (canvas.height * 0.2) + Math.random() * (canvas.height * 0.2);
+                    } else {
+                        platformY = (canvas.height * 0.6) + Math.random() * (canvas.height * 0.3);
+                    }
+                    entities.push(new Entity(canvas.width, platformY, 50, 20, type));
+                }
+            }
+        }
+
+        function checkCollisions() {
+            for (let i = entities.length - 1; i >= 0; i--) {
+                let e = entities[i];
+
+                // Colisión AABB simple
+                if (helicopter.x < e.x + e.w &&
+                    helicopter.x + helicopter.width > e.x &&
+                    helicopter.y < e.y + e.h &&
+                    helicopter.y + helicopter.height > e.y) {
+
+                    if (e.type === 'BIRD' || e.type === 'CABLE') {
+                        gameOver("¡Accidente aéreo!");
+                    }
+                    else if (e.type === 'FUEL_STATION') {
+                        // Solo recarga si estamos cerca del suelo (aterrizando de facto)
+                        if (helicopter.dy >= 0) {
+                            helicopter.fuel = Math.min(100, helicopter.fuel + CFG.fuelRefill);
+                            entities.splice(i, 1);
+                        }
+                    }
+                    else if (e.type === 'ACCIDENT') {
+                        if (helicopter.carryingCount < 3) {
+                            helicopter.carryingCount++;
+                            entities.splice(i, 1);
+                        }
+                    }
+                    else if (e.type === 'HOSPITAL') {
+                        if (helicopter.carryingCount > 0) {
+                            rescues += helicopter.carryingCount;
+                            helicopter.carryingCount = 0;
+                            entities.splice(i, 1);
+                        }
+                    }
+                }
+            }
+        }
+
+        function loop(time) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (gameState === STATE.PLAYING) {
+                frameCount++;
+                gameSpeed += CFG.speedInc;
+                score += gameSpeed / 10;
+
+                distVal.innerText = Math.floor(score);
+                rescVal.innerText = rescues;
+
+                spawnEntities();
+                helicopter.update();
+
+                entities.forEach((e, index) => {
+                    e.update();
+                    e.draw();
+                    // Eliminar fuera de pantalla
+                    if (e.x + e.w < 0) entities.splice(index, 1);
+                });
+
+                checkCollisions();
+            }
+
+            helicopter.draw();
+
+            // Fondo (nubes simples placeholder)
+            ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            ctx.beginPath();
+            ctx.arc(100 + (Math.sin(Date.now() * 0.001) * 20), 100, 30, 0, Math.PI * 2);
+            ctx.fill();
+
+            requestAnimationFrame(loop);
+        }
+
+        window.onload = init;
+        window.onresize = resize;
+
+    </script>
+</body>
+
+</html>
